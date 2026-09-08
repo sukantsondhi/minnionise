@@ -1,400 +1,76 @@
 #!/usr/bin/env python3
-"""Minnionise Local Bridge v2.
-
-Standard-library local bridge for:
-- Ollama discovery + inference
-- LM Studio discovery + inference
-- Local voice discovery/synthesis (Piper, system voices, eSpeak)
-- Secure LAN phone pairing with a random token
-
-Run:
-    python server.py          # desktop-only loopback mode
-    python server.py --lan    # enable phone pairing on the local network
-"""
-from __future__ import annotations
-
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from urllib.parse import urlparse, parse_qs
-import argparse
+"""Minnionise bridge entrypoint with the mobile-first paired UI."""
 import json
-import mimetypes
-import os
-import platform
-import re
-import secrets
-import shutil
-import socket
-import subprocess
-import tempfile
-import time
-import urllib.error
-import urllib.request
+import server_core as core
 
-VERSION = "2.0.0"
-DEFAULT_PORT = 8765
-OLLAMA = "http://127.0.0.1:11434"
-LMSTUDIO = "http://127.0.0.1:1234"
-MAX_TEXT = 1200
-TOKEN = secrets.token_urlsafe(18)
-STARTED = time.time()
-CONFIG = {"host": "127.0.0.1", "port": DEFAULT_PORT, "lan": False}
-
-ALLOWED_WEB_ORIGINS = {
-    "https://sukantsondhi.github.io",
-    "http://127.0.0.1:8000",
-    "http://localhost:8000",
-    "http://127.0.0.1:5500",
-    "http://localhost:5500",
-}
-
-LEXICON = {
-    "hello":"bello","hi":"bello","goodbye":"poopaye","bye":"poopaye","friend":"amigo","friends":"amigos",
-    "thank":"tank","thanks":"tank yu","you":"tu","your":"tu","yes":"si","no":"na","love":"luv","banana":"banana",
-    "everyone":"tulaliloo","everybody":"tulaliloo","what":"wha","look":"luk","stop":"stupa","please":"por favor",
-    "morning":"matoka","night":"noche","good":"bon","very":"bello-bello","beautiful":"bella","happy":"papoy",
-    "party":"banana party","food":"papa","help":"bee-do","fire":"bee-do","boss":"big boss","work":"worka",
-    "school":"skoola","today":"toda","tomorrow":"tomorra","how":"como","are":"be","is":"be","my":"mi","our":"nossa",
-    "we":"wi","i":"mi","me":"mi"
-}
-TAILS = {
-    "gentle":[" banana."," papoy."],
-    "classic":[" banana!"," tulaliloo!"," papoy!"],
-    "chaos":[" BANANA! BEE-DO!"," tulaliloo papoy BANANA!"," poopaye? BANANA BANANA!"],
-    "teacher":[" banana."]
-}
-
-
-def run(cmd, **kwargs):
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=45, **kwargs)
-
-
-def request_json(url, method="GET", payload=None, timeout=2.0):
-    data = None if payload is None else json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method=method, headers={"Content-Type":"application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
-
-
-def local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        if ip and not ip.startswith("127."):
-            return ip
-    except Exception:
-        pass
-    try:
-        ip = socket.gethostbyname(socket.gethostname())
-        if ip and not ip.startswith("127."):
-            return ip
-    except Exception:
-        pass
-    return None
-
-
-def is_loopback(ip):
-    return ip in {"127.0.0.1", "::1"} or ip.startswith("127.")
-
-
-def provider_status():
-    out = []
-    try:
-        j = request_json(f"{OLLAMA}/api/tags", timeout=1.25)
-        models = []
-        for m in j.get("models", []):
-            details = m.get("details") or {}
-            models.append({"id":m.get("name"), "name":m.get("name"), "meta":details.get("parameter_size") or details.get("family") or "Ollama"})
-        out.append({"id":"ollama","name":"Ollama","connected":True,"endpoint":OLLAMA,"models":models})
-    except Exception:
-        out.append({"id":"ollama","name":"Ollama","connected":False,"endpoint":OLLAMA,"models":[]})
-    try:
-        j = request_json(f"{LMSTUDIO}/v1/models", timeout=1.25)
-        models = [{"id":m.get("id"),"name":m.get("id"),"meta":"LM Studio"} for m in j.get("data",[]) if m.get("id")]
-        out.append({"id":"lmstudio","name":"LM Studio","connected":True,"endpoint":LMSTUDIO,"models":models})
-    except Exception:
-        out.append({"id":"lmstudio","name":"LM Studio","connected":False,"endpoint":LMSTUDIO,"models":[]})
-    return out
-
-
-def piper_roots():
-    roots = [Path.home()/"piper", Path.home()/"models", Path.home()/".local/share/piper", Path.home()/"Documents/piper"]
-    if platform.system() == "Windows":
-        for env in ("LOCALAPPDATA","APPDATA"):
-            if os.getenv(env): roots.append(Path(os.environ[env])/"piper")
-    roots += [Path(x).expanduser() for x in os.getenv("MINNIONISE_MODEL_DIRS", "").split(os.pathsep) if x]
-    return roots
-
-
-def voices():
-    out = []
-    piper = shutil.which("piper")
-    if piper:
-        seen = set()
-        for root in piper_roots():
-            if not root.exists(): continue
-            try:
-                found = list(root.rglob("*.onnx"))[:60]
-            except Exception:
-                continue
-            for p in found:
-                sp = str(p.resolve())
-                if sp in seen: continue
-                seen.add(sp)
-                out.append({"id":"piper::"+sp,"name":"Piper • "+p.stem,"engine":"piper","path":sp})
-    system = platform.system()
-    if system == "Windows":
-        out.append({"id":"sapi::default","name":"Windows system voice","engine":"sapi"})
-    elif system == "Darwin" and shutil.which("say"):
-        try:
-            r = run(["say","-v","?"])
-            for line in r.stdout.splitlines()[:24]:
-                name = line.split()[0] if line.split() else ""
-                if name: out.append({"id":"say::"+name,"name":"macOS • "+name,"engine":"say","voice":name})
-        except Exception:
-            out.append({"id":"say::default","name":"macOS system voice","engine":"say","voice":None})
-    else:
-        exe = shutil.which("espeak-ng") or shutil.which("espeak")
-        if exe:
-            out.append({"id":"espeak::default","name":"eSpeak system voice","engine":"espeak","voice":"en"})
-    return out
-
-
-def no_model_transform(text, style="classic"):
-    original = text.strip()
-    def repl(match):
-        w = match.group(0).lower()
-        if w in LEXICON: return LEXICON[w]
-        t = re.sub(r"tion$", "shun", w)
-        t = re.sub(r"ing$", "in", t)
-        t = re.sub(r"^th", "d", t)
-        t = t.replace("th", "t")
-        if style == "chaos" and len(t) > 7: t = t[: max(4, int(len(t)*.7))] + "a"
-        return t
-    mapped = re.sub(r"\b[a-z']+\b", repl, original.lower())
-    mapped = re.sub(r"\bi am\b", "mi be", mapped)
-    mapped = re.sub(r"\bdo not\b", "no-no", mapped)
-    tails = TAILS.get(style, TAILS["classic"])
-    tail = tails[(len(original)+len(style)) % len(tails)]
-    prefix = "" if mapped.startswith("bello") else ("bello, " if style == "gentle" else "Bello! ")
-    phrase = re.sub(r"\s+", " ", prefix + re.sub(r"[.!?]+$", "", mapped) + tail).strip()
-    syllables = re.findall(r"[A-Za-zÀ-ÿ'-]+", phrase)[:28]
-    pronunciation = " · ".join(s.lower() for s in syllables)
-    return {
-        "minnionese": phrase,
-        "pronunciation": pronunciation,
-        "syllables": syllables,
-        "explanation": "Generated locally by Minnionise’s deterministic no-model phrase engine; no AI or cloud request was used.",
-        "source": "no-model"
-    }
-
-
-def system_prompt(style):
-    return (
-        "You are Minnionise, a playful fan-inspired fictional-language pronunciation coach. "
-        "Transform the user's English sentence into original playful banana-language inspired by comic gibberish, without quoting movie dialogue. "
-        "Preserve meaning, keep it pronounceable, and avoid offensive content. "
-        f"Style={style}. Return ONLY valid JSON with exactly these keys: minnionese (string), pronunciation (simple phonetic string separated with middle dots), "
-        "syllables (array of max 24 short strings), explanation (one concise sentence). Do not use markdown."
-    )
-
-
-def parse_jsonish(raw):
-    text = str(raw or "").strip()
-    text = re.sub(r"^```(?:json)?", "", text, flags=re.I).strip()
-    text = re.sub(r"```$", "", text).strip()
-    try:
-        obj = json.loads(text)
-    except Exception:
-        a, b = text.find("{"), text.rfind("}")
-        if a < 0 or b <= a: raise ValueError("Model did not return valid JSON")
-        obj = json.loads(text[a:b+1])
-    if not obj.get("minnionese"): raise ValueError("Model response is missing minnionese")
-    if not isinstance(obj.get("syllables"), list): obj["syllables"] = re.findall(r"[A-Za-zÀ-ÿ'-]+", obj["minnionese"])[:24]
-    obj.setdefault("pronunciation", " · ".join(obj["syllables"]))
-    obj.setdefault("explanation", "Generated by your local model.")
-    return obj
-
-
-def translate_with(provider, model, text, style):
-    if provider == "no-model": return no_model_transform(text, style)
-    messages = [{"role":"system","content":system_prompt(style)},{"role":"user","content":text}]
-    if provider == "ollama":
-        j = request_json(f"{OLLAMA}/api/chat", "POST", {"model":model,"messages":messages,"stream":False,"format":"json","options":{"temperature":0.35}}, timeout=70)
-        return parse_jsonish((j.get("message") or {}).get("content"))
-    if provider == "lmstudio":
-        j = request_json(f"{LMSTUDIO}/v1/chat/completions", "POST", {"model":model,"messages":messages,"temperature":0.35,"max_tokens":550}, timeout=70)
-        choices = j.get("choices") or []
-        if not choices: raise ValueError("LM Studio returned no choices")
-        return parse_jsonish((choices[0].get("message") or {}).get("content"))
-    raise ValueError("Unsupported provider")
-
-
-def synth(text, voice, rate, directory):
-    engine = voice.get("engine")
-    out = Path(directory)/"voice.wav"
-    if engine == "piper":
-        cmd = [shutil.which("piper") or "piper", "--model", voice["path"], "--length_scale", str(1/max(rate,.1)), "--output_file", str(out)]
-        r = subprocess.run(cmd, input=text, capture_output=True, text=True, timeout=60)
-    elif engine == "espeak":
-        exe = shutil.which("espeak-ng") or shutil.which("espeak")
-        r = run([exe,"-v",voice.get("voice") or "en","-s",str(int(170*rate)),"-w",str(out),text])
-    elif engine == "say":
-        out = Path(directory)/"voice.aiff"
-        cmd = ["say"]
-        if voice.get("voice"): cmd += ["-v",voice["voice"]]
-        cmd += ["-r",str(int(190*rate)),"-o",str(out),text]
-        r = run(cmd)
-    elif engine == "sapi":
-        safe_text = text.replace("'","''")
-        safe_path = str(out).replace("'","''")
-        ps = f"Add-Type -AssemblyName System.Speech;$s=New-Object System.Speech.Synthesis.SpeechSynthesizer;$s.Rate=0;$s.SetOutputToWaveFile('{safe_path}');$s.Speak('{safe_text}');$s.Dispose()"
-        r = run(["powershell","-NoProfile","-Command",ps])
-    else:
-        raise RuntimeError("Unsupported voice engine")
-    if r.returncode != 0: raise RuntimeError((r.stderr or r.stdout or "Synthesis failed").strip())
-    if not out.exists(): raise RuntimeError("Voice engine did not create an audio file")
-    return out
+core.VERSION = "2.1.0"
 
 
 def mobile_page(token):
     token_js = json.dumps(token)
-    return f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#090b10"><title>Minnionise Mobile</title><style>
-*{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at 90% 0,#594c0d55,transparent 32%),#090b10;color:#faf9f1;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}.app{{max-width:650px;margin:auto;padding:18px 16px 50px}}header{{display:flex;justify-content:space-between;align-items:center;padding:8px 0 35px}}.brand{{font-weight:950;letter-spacing:.12em}}.brand span{{color:#ffd72e}}.status{{font-size:10px;background:#162018;border:1px solid #365b3d;color:#87e99d;padding:8px 10px;border-radius:99px}}h1{{font-size:clamp(43px,14vw,68px);line-height:.92;letter-spacing:-.065em;margin:0 0 13px}}h1 em{{color:#ffd72e;font-style:normal}}.sub{{color:#8993a2;font-size:14px;line-height:1.5;margin-bottom:25px}}.card{{background:#121720e8;border:1px solid #ffffff17;border-radius:24px;padding:18px;box-shadow:0 25px 70px #0007;margin-bottom:12px}}.mode{{display:grid;grid-template-columns:1fr 1fr;gap:7px;background:#090c11;padding:6px;border-radius:16px}}button,select,textarea{{font:inherit}}.mode button{{border:0;border-radius:12px;padding:11px;background:transparent;color:#7e8897;font-weight:700}}.mode .on{{background:#ffd72e;color:#111}}label{{display:block;font-size:9px;letter-spacing:.12em;color:#7a8492;margin:14px 0 7px}}select,textarea{{width:100%;border:1px solid #ffffff14;background:#0b0e14;color:#fff;border-radius:13px;padding:12px;outline:none}}textarea{{min-height:130px;resize:vertical;font-size:20px;line-height:1.35}}.go,.play{{width:100%;border:0;border-radius:14px;background:#ffd72e;color:#121212;font-weight:900;padding:15px;margin-top:12px}}.result{{display:none}}.result.show{{display:block}}.phrase{{font-size:37px;line-height:1.03;font-weight:950;letter-spacing:-.04em;margin:10px 0}}.phon{{color:#ffd72e;font-family:monospace;font-size:11px;line-height:1.6}}.chips{{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0}}.chips button{{border:1px solid #ffffff17;background:#ffffff08;color:#ddd;border-radius:99px;padding:7px 10px}}.row{{display:grid;grid-template-columns:1fr 1fr;gap:7px}}.row button{{border:1px solid #ffffff17;background:#ffffff07;color:#ddd;border-radius:12px;padding:12px}}.tiny{{font-size:9px;line-height:1.55;color:#687281}}code{{color:#b9c2d0}}footer{{color:#505966;font-size:8px;text-align:center;margin-top:24px}}
-</style></head><body><div class="app"><header><div class="brand">MINNION<span>ISE</span></div><div class="status" id="status">● Paired</div></header><h1>Your desktop AI.<br><em>In your pocket.</em></h1><p class="sub">This page is being served directly by your computer. Prompts stay on your local network.</p><div class="card"><div class="mode"><button class="on" id="no">No model</button><button id="my">My model</button></div><div id="providerBox" hidden><label>LOCAL PROVIDER</label><select id="provider"></select><label>MODEL</label><select id="model"></select></div><label>YOUR SENTENCE</label><textarea id="input" placeholder="Good morning everyone, how are you?"></textarea><button class="go" id="go">MINNIONISE ✦</button></div><div class="card result" id="result"><label>YOUR MINNIONESE</label><div class="phrase" id="phrase"></div><div class="phon" id="phon"></div><div class="chips" id="chips"></div><div class="row"><button id="slow">🐌 Slow</button><button id="play">▶ Play</button></div><p class="tiny" id="explain"></p></div><div class="card"><b style="font-size:11px">🔒 Local pairing</b><p class="tiny">The random pairing token is required for requests from devices other than this computer. Stop the bridge to end this phone session.</p></div><footer>🍌 Fan-inspired experiment • No affiliation with Illumination or Universal.</footer></div><script>
-const TOKEN={token_js},H={{'X-Minnionise-Token':TOKEN}},$=s=>document.querySelector(s);let mode='no-model',status=null;async function load(){{let r=await fetch('/api/status',{{headers:H}});status=await r.json();let ps=(status.providers||[]).filter(x=>x.connected&&x.models.length);$('#provider').innerHTML=ps.map(p=>`<option value="${{p.id}}">${{p.name}}</option>`).join('');fill();if(!ps.length)$('#my').disabled=true}}function fill(){{let p=(status?.providers||[]).find(x=>x.id===$('#provider').value);$('#model').innerHTML=(p?.models||[]).map(m=>`<option value="${{m.id}}">${{m.name}}</option>`).join('')}}$('#provider').onchange=fill;$('#no').onclick=()=>{{mode='no-model';$('#no').className='on';$('#my').className='';$('#providerBox').hidden=true}};$('#my').onclick=()=>{{mode='model';$('#my').className='on';$('#no').className='';$('#providerBox').hidden=false}};async function speak(t,rate=1){{try{{let v=status?.voices?.[0];if(!v)throw 0;let r=await fetch('/api/speak',{{method:'POST',headers:{{...H,'Content-Type':'application/json'}},body:JSON.stringify({{text:t,voice_id:v.id,rate}})}});if(!r.ok)throw 0;let b=await r.blob(),u=URL.createObjectURL(b),a=new Audio(u);a.onended=()=>URL.revokeObjectURL(u);a.play()}}catch{{let u=new SpeechSynthesisUtterance(t);u.rate=rate;speechSynthesis.speak(u)}}}}$('#go').onclick=async()=>{{let text=$('#input').value.trim();if(!text)return;$('#go').textContent='THINKING…';try{{let p=mode==='no-model'?'no-model':$('#provider').value,m=mode==='no-model'?null:$('#model').value,r=await fetch('/api/translate',{{method:'POST',headers:{{...H,'Content-Type':'application/json'}},body:JSON.stringify({{provider:p,model:m,text,style:'classic'}})}}),j=await r.json();if(!r.ok)throw Error(j.error||'Failed');$('#phrase').textContent=j.minnionese;$('#phon').textContent='/ '+j.pronunciation+' /';$('#explain').textContent=j.explanation||'';$('#chips').innerHTML='';(j.syllables||[]).forEach(s=>{{let b=document.createElement('button');b.textContent=s;b.onclick=()=>speak(s,.75);$('#chips').append(b)}});$('#result').classList.add('show')}}catch(e){{alert(e.message)}}finally{{$('#go').textContent='MINNIONISE ✦'}}}};$('#play').onclick=()=>speak($('#phrase').textContent,1);$('#slow').onclick=()=>speak($('#phrase').textContent,.62);load();
-</script></body></html>'''
+    page = r'''<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#090b10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Minnionise Mobile</title>
+<style>
+:root{--bg:#090b10;--panel:#121720;--panel2:#0d1118;--text:#faf9f1;--muted:#8d96a5;--line:#ffffff17;--yellow:#ffd72e;--green:#72efa5;--blue:#70b4ff;--red:#ff8585}
+*{box-sizing:border-box;min-width:0}html,body{width:100%;max-width:100%;overflow-x:clip;-webkit-text-size-adjust:100%;text-size-adjust:100%;color-scheme:dark}body{margin:0;min-height:100svh;background:radial-gradient(circle at 95% -5%,#ffd72e22,transparent 34%),radial-gradient(circle at -15% 60%,#215faa24,transparent 36%),var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;overscroll-behavior-x:none}.app{width:100%;max-width:640px;margin:0 auto;padding:calc(12px + env(safe-area-inset-top,0px)) max(14px,env(safe-area-inset-right,0px)) calc(42px + env(safe-area-inset-bottom,0px)) max(14px,env(safe-area-inset-left,0px))}.top{position:sticky;top:max(8px,env(safe-area-inset-top,0px));z-index:20;display:flex;align-items:center;justify-content:space-between;gap:10px;height:56px;padding:0 12px;margin-bottom:34px;border:1px solid var(--line);border-radius:18px;background:#10151ddb;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 18px 50px #0007}.brand{font-weight:950;letter-spacing:.1em;font-size:13px;white-space:nowrap}.brand span{color:var(--yellow)}.status{display:flex;align-items:center;gap:7px;font-size:10px;color:#b7c0cb;white-space:nowrap}.dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 5px #72efa514,0 0 18px #72efa544}.eyebrow{font-size:9px;letter-spacing:.16em;color:var(--yellow);font-weight:900}.hero h1{font-size:clamp(38px,12vw,58px);line-height:.92;letter-spacing:-.055em;margin:10px 0 14px;overflow-wrap:anywhere}.hero h1 em{display:block;color:var(--yellow);font-style:normal}.sub{font-size:14px;line-height:1.5;color:var(--muted);margin:0 0 24px}.card{width:100%;background:linear-gradient(145deg,#141a24ed,#0f131bea);border:1px solid var(--line);border-radius:22px;padding:16px;box-shadow:0 24px 70px #0007;margin-bottom:11px;overflow:hidden}.mode{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:6px;border:1px solid #ffffff0c;background:#090c11;border-radius:16px}.mode button,.styles button{border:0;color:#8d96a5;background:transparent;min-height:44px;border-radius:11px;font:inherit;font-size:11px;font-weight:800;touch-action:manipulation}.mode button.on,.styles button.on{background:var(--yellow);color:#111}.section{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:17px 1px 7px}.section label{margin:0}.section span{font-size:9px;color:#667181}.label,label{display:block;font-size:9px;letter-spacing:.12em;color:#7f8998;font-weight:800}.field{width:100%;border:1px solid #ffffff16;background:#0a0e14;color:#fff;border-radius:13px;padding:12px;font:inherit;font-size:16px;outline:none}.field:focus,textarea:focus{border-color:#ffd72e66;box-shadow:0 0 0 3px #ffd72e10}select.field{min-height:48px}textarea.field{min-height:134px;max-height:40svh;resize:vertical;font-size:20px;line-height:1.35;padding:14px}.provider-grid{display:grid;grid-template-columns:1fr;gap:8px}.provider-row{display:grid;grid-template-columns:1fr;gap:7px}.styles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}.styles button{min-height:40px;font-size:9px;border:1px solid #ffffff0c;background:#ffffff06}.go{width:100%;min-height:54px;border:0;border-radius:14px;background:linear-gradient(135deg,var(--yellow),#f4ba19);color:#111;font-size:11px;font-weight:950;letter-spacing:.08em;margin-top:14px;touch-action:manipulation;box-shadow:0 14px 32px #ffd72e18}.go:disabled{opacity:.55}.notice{display:none;margin-top:10px;border-radius:12px;padding:10px 11px;font-size:10px;line-height:1.45}.notice.show{display:block}.notice.error{background:#ff85850e;border:1px solid #ff858529;color:#ffaaaa}.notice.ok{background:#72efa50d;border:1px solid #72efa522;color:#9bf3b8}.result{display:none}.result.show{display:block}.result-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.result-actions{display:flex;gap:6px}.icon{width:42px;height:42px;border-radius:12px;border:1px solid var(--line);background:#ffffff06;color:#c7ced8;font-size:16px}.phrase{font-size:clamp(31px,10.6vw,43px);line-height:1.02;font-weight:950;letter-spacing:-.045em;margin:20px 0 10px;overflow-wrap:anywhere}.phon{color:var(--yellow);font-family:"SFMono-Regular",Menlo,monospace;font-size:11px;line-height:1.6;overflow-wrap:anywhere}.chips{display:flex;gap:7px;flex-wrap:wrap;margin:15px 0}.chips button{min-height:42px;border:1px solid var(--line);background:#ffffff07;color:#dce1e8;border-radius:999px;padding:8px 13px;font-size:11px}.voice-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.voice-row button{min-height:50px;border:1px solid var(--line);background:#ffffff07;color:#e5e8ec;border-radius:13px;font-size:11px;font-weight:800}.explain{font-size:10px;line-height:1.6;color:#788391;margin:15px 0 2px}.device{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}.device b{font-size:11px}.device small{display:block;margin-top:4px;color:#697484;font-size:9px;line-height:1.45}.badge{padding:7px 9px;border-radius:999px;background:#72efa50d;border:1px solid #72efa522;color:#86efaa;font-size:8px;font-weight:800;white-space:nowrap}.tiny{font-size:9px;line-height:1.55;color:#687281;margin:9px 0 0}footer{text-align:center;color:#505966;font-size:8px;line-height:1.5;margin-top:22px;padding-bottom:env(safe-area-inset-bottom,0px)}button{-webkit-tap-highlight-color:transparent;cursor:pointer}button:active{transform:scale(.985)}[hidden]{display:none!important}
+@media(max-width:380px){.app{padding-left:max(11px,env(safe-area-inset-left,0px));padding-right:max(11px,env(safe-area-inset-right,0px))}.hero h1{font-size:36px}.card{padding:14px}.styles{grid-template-columns:repeat(2,minmax(0,1fr))}.styles button{min-height:42px;font-size:10px}.brand{font-size:12px}.status{font-size:9px}.voice-row{grid-template-columns:1fr}.result-head{align-items:flex-start;flex-wrap:wrap}.result-actions{margin-left:auto}}
+@media(hover:none){button:hover{transform:none}}
+</style>
+</head>
+<body>
+<main class="app">
+  <header class="top"><div class="brand">MINNION<span>ISE</span></div><div class="status"><i class="dot"></i><span id="pairStatus">Paired locally</span></div></header>
+  <section class="hero"><div class="eyebrow">DESKTOP AI • PHONE EXPERIENCE</div><h1>Your desktop AI.<em>In your pocket.</em></h1><p class="sub">Translate and practise using your computer's local models over the same Wi-Fi. Nothing needs to leave your network.</p></section>
+  <section class="card">
+    <div class="mode"><button class="on" id="no">No model</button><button id="my">My model</button></div>
+    <div id="providerBox" hidden>
+      <div class="section"><label for="provider">LOCAL PROVIDER</label><span id="providerMeta">Desktop</span></div>
+      <div class="provider-grid"><div class="provider-row"><select class="field" id="provider"></select><select class="field" id="model"></select></div></div>
+    </div>
+    <div class="section"><label>STYLE</label><span>Tap to change</span></div>
+    <div class="styles" id="styles"><button data-style="gentle">Gentle</button><button class="on" data-style="classic">Classic</button><button data-style="chaos">Chaos</button><button data-style="teacher">Teacher</button></div>
+    <div class="section"><label for="input">YOUR SENTENCE</label><span id="count">0 / 500</span></div>
+    <textarea class="field" id="input" maxlength="500" placeholder="Good morning everyone, how are you?"></textarea>
+    <button class="go" id="go">MINNIONISE ✦</button>
+    <div class="notice" id="notice"></div>
+  </section>
+  <section class="card result" id="result">
+    <div class="result-head"><label>YOUR MINNIONESE</label><div class="result-actions"><button class="icon" id="copy" aria-label="Copy">⧉</button><button class="icon" id="share" aria-label="Share">↗</button></div></div>
+    <div class="phrase" id="phrase"></div><div class="phon" id="phon"></div><div class="chips" id="chips"></div>
+    <div class="voice-row"><button id="slow">🐌 Slow</button><button id="play">▶ Play</button></div><p class="explain" id="explain"></p>
+  </section>
+  <section class="card device"><div><b>🔒 Local pairing</b><small id="deviceMeta">This phone session is protected by a random pairing token. Stop the bridge to end it.</small></div><span class="badge">LAN ONLY</span></section>
+  <footer>🍌 Fan-inspired language experiment • No affiliation with Illumination or Universal.</footer>
+</main>
+<script>
+const TOKEN=__TOKEN__,H={'X-Minnionise-Token':TOKEN},$=s=>document.querySelector(s);let mode='no-model',style='classic',status=null,current=null;
+const notice=(m,t='')=>{let n=$('#notice');n.textContent=m;n.className='notice show '+t};
+async function load(){try{let r=await fetch('/api/status',{headers:H});if(!r.ok)throw Error('Pairing session is unavailable');status=await r.json();let ps=(status.providers||[]).filter(x=>x.connected&&x.models&&x.models.length);$('#provider').innerHTML=ps.map(p=>'<option value="'+p.id+'">'+p.name+'</option>').join('');fill();$('#my').disabled=!ps.length;$('#providerMeta').textContent=ps.length?ps.length+' provider'+(ps.length===1?'':'s'):'No model server';let voice=(status.voices||[])[0];$('#deviceMeta').textContent=(voice?'Voice: '+voice.name+'. ':'Browser voice fallback. ')+'This session is protected by a random pairing token.'}catch(e){$('#pairStatus').textContent='Connection issue';notice(e.message||'Could not reach the desktop bridge','error')}}
+function fill(){let p=(status?.providers||[]).find(x=>x.id===$('#provider').value);$('#model').innerHTML=(p?.models||[]).map(m=>'<option value="'+m.id+'">'+m.name+'</option>').join('')}
+$('#provider').onchange=fill;
+$('#no').onclick=()=>{mode='no-model';$('#no').className='on';$('#my').className='';$('#providerBox').hidden=true;notice('No Model mode is ready. No AI server is required.','ok')};
+$('#my').onclick=()=>{if($('#my').disabled)return;mode='model';$('#my').className='on';$('#no').className='';$('#providerBox').hidden=false;notice('Using the model running on your desktop.','ok')};
+$('#styles').onclick=e=>{let b=e.target.closest('[data-style]');if(!b)return;style=b.dataset.style;document.querySelectorAll('[data-style]').forEach(x=>x.classList.toggle('on',x===b))};
+$('#input').oninput=e=>$('#count').textContent=e.target.value.length+' / 500';
+async function speak(t,rate=1){if(!t)return;try{let v=status?.voices?.[0];if(!v)throw Error();let r=await fetch('/api/speak',{method:'POST',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({text:t,voice_id:v.id,rate})});if(!r.ok)throw Error();let b=await r.blob(),u=URL.createObjectURL(b),a=new Audio(u);a.onended=()=>URL.revokeObjectURL(u);await a.play()}catch{if('speechSynthesis'in window){speechSynthesis.cancel();let u=new SpeechSynthesisUtterance(t);u.rate=rate;u.pitch=1.12;speechSynthesis.speak(u)}}}
+$('#go').onclick=async()=>{let text=$('#input').value.trim();if(!text){notice('Type a sentence first.','error');$('#input').focus();return}let btn=$('#go'),old=btn.textContent;btn.disabled=true;btn.textContent='THINKING…';notice(mode==='model'?'Asking your desktop model…':'Transforming locally…','');try{let p=mode==='no-model'?'no-model':$('#provider').value,m=mode==='no-model'?null:$('#model').value,r=await fetch('/api/translate',{method:'POST',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({provider:p,model:m,text,style})}),j=await r.json();if(!r.ok)throw Error(j.error||'Translation failed');current=j;$('#phrase').textContent=j.minnionese;$('#phon').textContent='/ '+(j.pronunciation||'')+' /';$('#explain').textContent=j.explanation||'';$('#chips').innerHTML='';(j.syllables||[]).slice(0,28).forEach(s=>{let b=document.createElement('button');b.textContent=s;b.onclick=()=>speak(s,.75);$('#chips').append(b)});$('#result').classList.add('show');notice(mode==='model'?'Generated by your desktop model.':'Generated without an AI model.','ok');navigator.vibrate?.(12);setTimeout(()=>$('#result').scrollIntoView({behavior:'smooth',block:'nearest'}),30)}catch(e){notice(e.message||'Request failed','error')}finally{btn.disabled=false;btn.textContent=old}};
+$('#play').onclick=()=>speak($('#phrase').textContent,1);$('#slow').onclick=()=>speak($('#phrase').textContent,.62);
+$('#copy').onclick=async()=>{if(!current)return;let t=current.minnionese+'\n'+(current.pronunciation||'');try{await navigator.clipboard.writeText(t);notice('Copied to clipboard.','ok')}catch{notice('Copy is not available in this browser.','error')}};
+$('#share').onclick=async()=>{if(!current)return;let data={title:'Minnionise',text:current.minnionese+'\n'+(current.pronunciation||'')};try{if(navigator.share)await navigator.share(data);else await navigator.clipboard.writeText(data.text)}catch{}};
+load();
+</script>
+</body></html>'''
+    return page.replace('__TOKEN__', token_js)
 
 
-class Handler(BaseHTTPRequestHandler):
-    server_version = "MinnioniseBridge/2"
+core.mobile_page = mobile_page
 
-    def log_message(self, fmt, *args):
-        print(f"[{self.client_address[0]}] " + (fmt % args))
-
-    def _origin_allowed(self):
-        origin = self.headers.get("Origin")
-        if not origin: return True
-        if origin in ALLOWED_WEB_ORIGINS: return True
-        # Same-origin mobile UI served by the bridge.
-        try:
-            u = urlparse(origin)
-            if u.port == CONFIG["port"] and (u.hostname in {"127.0.0.1","localhost",local_ip()}): return True
-        except Exception:
-            pass
-        return False
-
-    def _token(self):
-        header = self.headers.get("X-Minnionise-Token", "")
-        if header: return header
-        return parse_qs(urlparse(self.path).query).get("token", [""])[0]
-
-    def _authorized(self, api=True):
-        ip = self.client_address[0]
-        if is_loopback(ip):
-            return self._origin_allowed()
-        return CONFIG["lan"] and secrets.compare_digest(self._token(), TOKEN)
-
-    def _cors(self):
-        origin = self.headers.get("Origin")
-        if origin and self._origin_allowed(): self.send_header("Access-Control-Allow-Origin", origin)
-        self.send_header("Vary", "Origin")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Minnionise-Token")
-        self.send_header("Access-Control-Allow-Private-Network", "true")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "no-referrer")
-
-    def json(self, obj, status=200):
-        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        self.send_response(status); self._cors(); self.send_header("Content-Type","application/json; charset=utf-8"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
-
-    def html(self, text, status=200):
-        body = text.encode("utf-8")
-        self.send_response(status); self._cors(); self.send_header("Content-Type","text/html; charset=utf-8"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
-
-    def do_OPTIONS(self):
-        if not self._origin_allowed(): return self.json({"error":"Origin not allowed"},403)
-        self.send_response(204); self._cors(); self.end_headers()
-
-    def do_GET(self):
-        path = urlparse(self.path).path
-        if path in {"/mobile","/"} and not is_loopback(self.client_address[0]):
-            if not self._authorized(False): return self.html("<h1>Pairing token invalid</h1>",403)
-            return self.html(mobile_page(self._token()))
-        if path == "/api/health":
-            if not self._authorized(): return self.json({"error":"Unauthorized"},403)
-            return self.json({"ok":True,"version":VERSION})
-        if path == "/api/status":
-            if not self._authorized(): return self.json({"error":"Unauthorized"},403)
-            result = {"ok":True,"name":"Minnionise Local Bridge","version":VERSION,"platform":platform.system(),"uptime":int(time.time()-STARTED),"lan_enabled":CONFIG["lan"],"providers":provider_status(),"voices":voices()}
-            if is_loopback(self.client_address[0]): result["token"] = TOKEN
-            return self.json(result)
-        if path == "/api/models":
-            if not self._authorized(): return self.json({"error":"Unauthorized"},403)
-            return self.json({"providers":provider_status(),"voices":voices()})
-        if path == "/api/pair":
-            if not is_loopback(self.client_address[0]) or not self._authorized(): return self.json({"error":"Pairing can only be created from this computer"},403)
-            if not CONFIG["lan"]: return self.json({"error":"LAN mode is disabled. Restart with --lan."},409)
-            ip = local_ip()
-            if not ip: return self.json({"error":"Could not determine a LAN IP address"},500)
-            return self.json({"url":f"http://{ip}:{CONFIG['port']}/mobile?token={TOKEN}","ip":ip,"port":CONFIG["port"],"token":TOKEN})
-        return self.json({"error":"Not found"},404)
-
-    def do_POST(self):
-        if not self._authorized(): return self.json({"error":"Unauthorized"},403)
-        path = urlparse(self.path).path
-        try:
-            length = min(int(self.headers.get("Content-Length","0") or 0), 128_000)
-            data = json.loads(self.rfile.read(length) or b"{}")
-            if path == "/api/translate":
-                text = str(data.get("text","")).strip()[:MAX_TEXT]
-                provider = str(data.get("provider","no-model"))
-                model = data.get("model")
-                style = str(data.get("style","classic"))
-                if not text: return self.json({"error":"Text is required"},400)
-                if provider not in {"no-model","ollama","lmstudio"}: return self.json({"error":"Unsupported provider"},400)
-                result = translate_with(provider, model, text, style)
-                result["provider"] = provider; result["model"] = model
-                return self.json(result)
-            if path == "/api/speak":
-                text = str(data.get("text","")).strip()[:MAX_TEXT]
-                rate = max(.5,min(1.5,float(data.get("rate",1))))
-                available = voices(); vid = str(data.get("voice_id", "")); voice = next((v for v in available if v["id"] == vid), available[0] if available else None)
-                if not text or not voice: return self.json({"error":"No local voice is available"},400)
-                with tempfile.TemporaryDirectory(prefix="minnionise-") as td:
-                    p = synth(text, voice, rate, td); body = p.read_bytes(); ctype = "audio/aiff" if p.suffix.lower()==".aiff" else "audio/wav"
-                    self.send_response(200); self._cors(); self.send_header("Content-Type",ctype); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
-                    return
-            return self.json({"error":"Not found"},404)
-        except urllib.error.HTTPError as e:
-            try: msg = e.read().decode("utf-8")[:1000]
-            except Exception: msg = str(e)
-            return self.json({"error":f"Local provider returned HTTP {e.code}: {msg}"},502)
-        except Exception as e:
-            return self.json({"error":str(e)},500)
-
-
-def main():
-    ap = argparse.ArgumentParser(description="Minnionise local AI + voice bridge")
-    ap.add_argument("--lan", action="store_true", help="Bind to the local network and enable QR phone pairing")
-    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
-    args = ap.parse_args()
-    CONFIG["lan"] = bool(args.lan); CONFIG["port"] = args.port; CONFIG["host"] = "0.0.0.0" if args.lan else "127.0.0.1"
-    print("\n🍌 MINNIONISE LOCAL BRIDGE v" + VERSION)
-    print("   Desktop: http://127.0.0.1:%d" % args.port)
-    if args.lan:
-        ip = local_ip()
-        print("   LAN mode: ENABLED")
-        print("   Pairing:  http://%s:%d/mobile?token=%s" % (ip or "<your-ip>", args.port, TOKEN))
-        print("   Security: remote devices require the random pairing token")
-    else:
-        print("   LAN mode: off (use --lan to enable phone pairing)")
-    ps = provider_status(); print("   Models:   " + ", ".join(f"{p['name']}={len(p['models']) if p['connected'] else 'offline'}" for p in ps))
-    print("   Voices:   %d local voice(s)\n" % len(voices()))
-    ThreadingHTTPServer((CONFIG["host"], args.port), Handler).serve_forever()
-
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    core.main()

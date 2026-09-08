@@ -1,5 +1,5 @@
-const CACHE='minnionise-v2-20260908';
-const CORE=['./','./index.html','./styles.css','./app.js','./favicon.svg','./manifest.webmanifest'];
+const CACHE='minnionise-v2-mobile-20260908';
+const CORE=['./','./index.html','./styles.css','./styles-base.css','./app.js','./favicon.svg','./manifest.webmanifest'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{

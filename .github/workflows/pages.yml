@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p _site
-          cp index.html styles.css app.js favicon.svg manifest.webmanifest sw.js 404.html .nojekyll _site/
+          cp index.html styles.css styles-base.css app.js favicon.svg manifest.webmanifest sw.js 404.html .nojekyll _site/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
