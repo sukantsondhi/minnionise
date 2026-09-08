@@ -1,4 +1,4 @@
-name: Publish Minnionise site
+name: Deploy Minnionise to GitHub Pages
 
 on:
   push:
@@ -6,42 +6,38 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 concurrency:
-  group: minnionise-pages-publish
+  group: pages
   cancel-in-progress: true
 
 jobs:
-  publish:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build static artifact
+        shell: bash
+        run: |
+          mkdir -p _site
+          cp index.html styles.css app.js favicon.svg manifest.webmanifest sw.js 404.html .nojekyll _site/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
         with:
-          fetch-depth: 0
+          path: _site
 
-      - name: Build static publish directory
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf _site
-          mkdir _site
-          cp index.html _site/index.html
-          cp .nojekyll _site/.nojekyll
-
-      - name: Publish gh-pages branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git fetch origin gh-pages || true
-          git switch --orphan gh-pages-publish
-          git rm -rf . >/dev/null 2>&1 || true
-          cp -a _site/. .
-          rm -rf _site
-          git add -A
-          git commit -m "Deploy Minnionise from ${GITHUB_SHA::7}"
-          git push --force origin HEAD:gh-pages
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
