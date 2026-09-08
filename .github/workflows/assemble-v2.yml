@@ -1,35 +1,32 @@
-name: Assemble Minnionise v2 staging
+name: Assemble Minnionise v2 production
 
 on:
   push:
-    branches: ["v2-build"]
+    branches: ["main"]
 
 permissions:
   contents: write
 
 concurrency:
-  group: minnionise-v2-assembly
+  group: minnionise-v2-production-assembly
   cancel-in-progress: true
 
 jobs:
   assemble:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout staging
+      - name: Checkout main
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Assemble when upload is complete
+      - name: Assemble verified v2 bundle
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! -f .build_v2/READY ]]; then
-            echo "Staging bundle is not complete yet."
-            exit 0
-          fi
-
-          cat .build_v2/archive.*.b64 | base64 -d > /tmp/minnionise-v2.tar.gz
+          test -f .build_v2/new.000.b64
+          cat .build_v2/new.*.b64 | base64 -d > /tmp/minnionise-v2.tar.gz
+          tar -tzf /tmp/minnionise-v2.tar.gz >/dev/null
 
           rm -rf assets docs local_bridge
           rm -f index.html styles.css app.js favicon.svg manifest.webmanifest sw.js 404.html README.md LICENSE .gitignore .nojekyll
@@ -41,9 +38,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-          git commit -m "Build Minnionise v2 local-AI experience"
-          git push origin HEAD:v2-build
+          git commit -m "Release Minnionise v2 local-AI experience"
+          git push origin HEAD:main
