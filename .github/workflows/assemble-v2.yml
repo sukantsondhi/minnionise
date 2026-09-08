@@ -24,16 +24,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f .build_v2/new.000.b64
+          if [[ ! -f .build_v2/new.000.b64 ]]; then
+            echo "Minnionise v2 is already assembled."
+            exit 0
+          fi
+
           cat .build_v2/new.*.b64 | base64 -d > /tmp/minnionise-v2.tar.gz
           tar -tzf /tmp/minnionise-v2.tar.gz >/dev/null
 
           rm -rf assets docs local_bridge
           rm -f index.html styles.css app.js favicon.svg manifest.webmanifest sw.js 404.html README.md LICENSE .gitignore .nojekyll
           tar -xzf /tmp/minnionise-v2.tar.gz -C .
-
           rm -rf .build_v2
-          rm -f .github/workflows/assemble-v2.yml
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
