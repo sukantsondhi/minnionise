@@ -1,0 +1,14 @@
+{
+  "models": [
+    {
+      "id": "kokoro-local-af-heart",
+      "name": "Kokoro · af_heart",
+      "engine": "openai_local",
+      "url": "http://127.0.0.1:8880/v1/audio/speech",
+      "model": "kokoro",
+      "voice": "af_heart",
+      "response_format": "wav",
+      "detail": "Kokoro running locally through an OpenAI-compatible TTS server"
+    }
+  ]
+}

@@ -1,1 +1,250 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#080b12"><title>Minnionise // Local Voice Lab</title><style>*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 80% 0,#4c410b55,transparent 32%),#080b12;color:#f7f7ef;font-family:Inter,system-ui,sans-serif}.shell{max-width:1200px;margin:auto;padding:22px}.top{display:flex;justify-content:space-between;align-items:center}.brand{font-weight:900;letter-spacing:.12em;font-size:1.2rem}.brand b,.yellow{color:#ffd928}.status{border:1px solid #ffffff22;border-radius:99px;padding:9px 13px;background:#ffffff08}.hero{padding:8vh 0 4vh}.hero h1{font-size:clamp(2.7rem,8vw,6.6rem);line-height:.88;margin:.15em 0;letter-spacing:-.06em}.hero p{max-width:680px;color:#aeb4c2;font-size:1.05rem}.grid{display:grid;grid-template-columns:280px 1fr;gap:20px}.card{background:#10141ddd;border:1px solid #ffffff16;border-radius:24px;padding:22px;box-shadow:0 20px 60px #0007}.label{font-size:.72rem;letter-spacing:.16em;color:#ffd928;font-weight:800}.model{width:100%;margin:14px 0;padding:14px;border:1px solid #ffd92855;background:#ffd9280c;color:#fff;border-radius:14px;text-align:left}.composer textarea{width:100%;min-height:145px;resize:vertical;border:1px solid #ffffff22;background:#080b12;color:#fff;border-radius:18px;padding:18px;font:inherit;font-size:1.08rem;outline:none}.composer textarea:focus{border-color:#ffd928}.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.row button,.go{border:0;border-radius:12px;padding:12px 16px;background:#222936;color:#fff;font-weight:750;cursor:pointer}.row button.on,.go{background:#ffd928;color:#111}.go{margin-left:auto}.result{display:none;margin-top:20px}.result.show{display:grid;grid-template-columns:1fr 280px;gap:20px}.phrase{font-size:clamp(1.8rem,5vw,3.5rem);font-weight:900;line-height:1.02;margin:18px 0}.phon{color:#ffd928;font-family:monospace}.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}.chip{border:1px solid #ffffff22;background:#ffffff09;color:#fff;padding:9px 12px;border-radius:99px;cursor:pointer}.play{width:100%;padding:15px;border:0;border-radius:14px;background:#ffd928;color:#111;font-weight:900;cursor:pointer}.range{width:100%;accent-color:#ffd928}.muted{color:#9299a8;font-size:.9rem}.history{margin-top:18px}.history div{padding:9px 0;border-bottom:1px solid #ffffff10;font-size:.85rem}@media(max-width:760px){.shell{padding:16px}.grid,.result.show{grid-template-columns:1fr}.hero{padding-top:5vh}.side{order:2}.go{margin-left:0;flex:1}.status{font-size:.75rem}} </style></head><body><div class="shell"><header class="top"><div class="brand">◉ <b>MINNION</b>ISE</div><div class="status" id="status">● Browser voice</div></header><section class="hero"><div class="label">BANANA-LINGUISTICS // LOCAL-FIRST</div><h1>Say anything.<br><span class="yellow">Learn it the Minnion way.</span></h1><p>Transform a sentence into playful fan-inspired Minnionese, then practise it using voices running on your own device.</p></section><main class="grid"><aside class="card side"><div class="label">VOICE CORE</div><h2>Local model</h2><button class="model" id="modelBtn"><b id="modelName">Browser local voice</b><br><span class="muted" id="modelMeta">Built into this device</span></button><button class="play" id="scan">↻ Scan local bridge</button><div class="history"><h3>Recent phrases</h3><div id="history"></div></div></aside><section><div class="card composer"><div class="label">01 // YOUR SENTENCE</div><h2>English in. Banana-babble out.</h2><textarea id="input" maxlength="280" placeholder="Hello everyone, I am learning something new today!"></textarea><div class="row"><button data-mode="soft">Soft</button><button class="on" data-mode="classic">Classic</button><button data-mode="chaos">Chaos</button><button class="go" id="go">Minnionise ✦</button></div></div><div class="result" id="result"><article class="card"><div class="label">02 // YOUR MINNIONESE</div><div class="phrase" id="phrase"></div><div class="phon" id="phon"></div><div class="chips" id="chips"></div></article><aside class="card"><div class="label">VOICE COACH</div><h2>Practise locally</h2><p class="muted">Hear the phrase using the selected local model.</p><button class="play" id="play">▶ Play pronunciation</button><p>Speed <b id="speedText">0.85×</b></p><input class="range" id="speed" type="range" min="0.55" max="1.25" step="0.05" value="0.85"><p class="muted">No cloud API required.</p></aside></div></section></main></div><script>const $=s=>document.querySelector(s),bridge='http://127.0.0.1:8765';let mode='classic',models=[],active=null;const dict={hello:'bello',hi:'bello',goodbye:'poopaye',friend:'amigo',friends:'amigos',thank:'tank',thanks:'tank yu',you:'tu',yes:'si',no:'na',love:'luv',banana:'banana',everyone:'tulaliloo',what:'wha',look:'luk',stop:'stupa',please:'por favor'};const tails=[' banana',' papoy',' tulaliloo',' bee-do'];function transform(t){let x=t.toLowerCase().replace(/\b[a-z']+\b/g,w=>dict[w]||w.replace(/tion\b/g,'shun').replace(/ing\b/g,'in').replace(/th/g,'d'));if(mode==='soft')return 'bello! '+x;if(mode==='chaos')return 'bello! '+x+tails[Math.floor(Math.random()*tails.length)]+tails[Math.floor(Math.random()*tails.length)]+'!';return 'bello! '+x+tails[Math.floor(Math.random()*tails.length)]+'!'}function syllables(t){return t.replace(/[^a-z\s'-]/gi,'').split(/\s+/).filter(Boolean)}function browserSpeak(t){speechSynthesis.cancel();let u=new SpeechSynthesisUtterance(t);u.rate=+$('speed').value;u.pitch=1.18;speechSynthesis.speak(u)}async function speak(t){if(!active||active.engine==='browser')return browserSpeak(t);try{let r=await fetch(bridge+'/api/speak',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t,model_id:active.id,rate:+$('speed').value})});if(!r.ok)throw Error();let b=await r.blob(),u=URL.createObjectURL(b),a=new Audio(u);a.onended=()=>URL.revokeObjectURL(u);a.play()}catch{browserSpeak(t)}}function renderHistory(){let h=JSON.parse(localStorage.getItem('minnionise-history')||'[]');$('history').innerHTML=h.slice(0,5).map(x=>'<div>'+x+'</div>').join('')||'<span class="muted">Nothing yet.</span>'}async function scan(){try{let r=await fetch(bridge+'/api/models'),j=await r.json();models=j.models||[];$('status').textContent='● Local bridge connected';$('status').style.color='#8cff9b';if(models.length){active=models[0];$('modelName').textContent=active.name;$('modelMeta').textContent=active.engine}}catch{$('status').textContent='● Browser voice';active={id:'browser',engine:'browser',name:'Browser local voice'}}}document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-mode]').forEach(x=>x.classList.remove('on'));b.classList.add('on');mode=b.dataset.mode});$('go').onclick=()=>{let t=$('input').value.trim();if(!t)return $('input').focus();let p=transform(t);$('phrase').textContent=p;$('phon').textContent='/ '+p.replace(/\s+/g,' · ')+' /';$('chips').innerHTML='';syllables(p).forEach(w=>{let b=document.createElement('button');b.className='chip';b.textContent=w;b.onclick=()=>speak(w);$('chips').append(b)});$('result').classList.add('show');let h=JSON.parse(localStorage.getItem('minnionise-history')||'[]');h.unshift(p);localStorage.setItem('minnionise-history',JSON.stringify([...new Set(h)].slice(0,10)));renderHistory()};$('play').onclick=()=>speak($('phrase').textContent);$('speed').oninput=e=>$('speedText').textContent=(+e.target.value).toFixed(2)+'×';$('scan').onclick=scan;$('modelBtn').onclick=()=>{if(!models.length)return scan();let i=Math.max(0,models.findIndex(x=>x.id===active?.id));active=models[(i+1)%models.length];$('modelName').textContent=active.name;$('modelMeta').textContent=active.engine};$('input').addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter')$('go').click()});renderHistory();scan();</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#090b10" />
+  <meta name="description" content="Minnionise is a local-first voice lab for turning sentences into playful Minnionese and practising them with local AI and local voices." />
+  <meta property="og:title" content="Minnionise — Local AI Voice Lab" />
+  <meta property="og:description" content="No cloud required. Connect Ollama, LM Studio, or use the built-in no-model engine." />
+  <title>Minnionise — Local AI Voice Lab</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+  <div class="noise"></div>
+
+  <header class="topbar glass">
+    <a class="brand" href="#" aria-label="Minnionise home">
+      <span class="goggle-mark" aria-hidden="true"><i></i><i></i></span>
+      <span>MINNION<span>ISE</span></span>
+    </a>
+    <nav class="top-actions" aria-label="App actions">
+      <button class="icon-btn" id="installBtn" hidden title="Install app" aria-label="Install app">⇩</button>
+      <button class="icon-btn" id="openHistoryBtn" title="History and favourites" aria-label="History and favourites">⌁</button>
+      <button class="connect-pill" id="openConnectBtn">
+        <span class="pulse-dot" id="connectionDot"></span>
+        <span id="connectionLabel">No model</span>
+        <b>Connect</b>
+      </button>
+    </nav>
+  </header>
+
+  <main class="app-shell">
+    <section class="hero reveal">
+      <div class="eyebrow"><span>LOCAL-FIRST</span><span>•</span><span>BANANA LINGUISTICS</span></div>
+      <h1>Say anything.<br><em>Learn it the Minnion way.</em></h1>
+      <p>Translate, listen, practise and share — with a built-in offline engine or the AI models already running on your own computer.</p>
+
+      <div class="mode-switch" role="tablist" aria-label="AI mode">
+        <button class="mode-tab active" id="noModelTab" data-app-mode="no-model" role="tab" aria-selected="true">
+          <span class="mode-icon">◌</span>
+          <span><b>No model</b><small>Instant • private • offline logic</small></span>
+        </button>
+        <button class="mode-tab" id="myModelTab" data-app-mode="my-model" role="tab" aria-selected="false">
+          <span class="mode-icon">✦</span>
+          <span><b>My model</b><small>Ollama • LM Studio • local bridge</small></span>
+        </button>
+      </div>
+    </section>
+
+    <section class="workspace reveal delay-1">
+      <div class="composer-card glass">
+        <div class="card-topline">
+          <div>
+            <span class="step">01</span>
+            <span class="section-label">YOUR SENTENCE</span>
+          </div>
+          <div class="privacy-chip"><span>●</span> stays on your devices</div>
+        </div>
+
+        <div class="provider-ribbon" id="providerRibbon" hidden>
+          <span class="provider-logo" id="providerIcon">◈</span>
+          <div><small>MY MODEL</small><b id="activeModelLabel">Not connected</b></div>
+          <button class="text-btn" id="changeModelBtn">Change</button>
+        </div>
+
+        <label class="sr-only" for="sentenceInput">Sentence to Minnionise</label>
+        <textarea id="sentenceInput" maxlength="500" rows="5" placeholder="Good morning everyone, how are you today?"></textarea>
+        <div class="input-meta">
+          <span id="charCount">0 / 500</span>
+          <span>⌘/Ctrl + Enter to transform</span>
+        </div>
+
+        <div class="controls-row">
+          <div class="style-picker" aria-label="Translation style">
+            <button data-style="gentle">Gentle</button>
+            <button class="active" data-style="classic">Classic</button>
+            <button data-style="chaos">Chaos</button>
+            <button data-style="teacher">Teacher</button>
+          </div>
+          <button class="primary-btn" id="translateBtn"><span>MINNIONISE</span><i>✦</i></button>
+        </div>
+      </div>
+
+      <aside class="status-stack">
+        <div class="status-card glass">
+          <div class="status-title"><span class="mini-orb brain"></span><small>LANGUAGE BRAIN</small></div>
+          <b id="brainStatus">Built-in engine</b>
+          <span id="brainMeta">Zero setup</span>
+        </div>
+        <div class="status-card glass">
+          <div class="status-title"><span class="mini-orb voice"></span><small>VOICE ENGINE</small></div>
+          <b id="voiceStatus">Browser voice</b>
+          <span id="voiceMeta">On this device</span>
+        </div>
+        <button class="pair-card glass" id="quickPairBtn">
+          <span class="pair-art">⌁</span>
+          <span><small>IPHONE / IPAD</small><b>Pair by QR</b><em>Use your computer's model from your phone</em></span>
+          <strong>→</strong>
+        </button>
+      </aside>
+    </section>
+
+    <section class="result-zone" id="resultZone" hidden>
+      <div class="result-main glass reveal">
+        <div class="card-topline">
+          <div><span class="step">02</span><span class="section-label">YOUR MINNIONESE</span></div>
+          <div class="result-actions">
+            <button class="icon-btn small" id="favoriteBtn" title="Favourite">☆</button>
+            <button class="icon-btn small" id="copyBtn" title="Copy">⧉</button>
+            <button class="icon-btn small" id="shareBtn" title="Share">↗</button>
+          </div>
+        </div>
+        <div class="result-phrase" id="resultPhrase"></div>
+        <div class="pronunciation" id="pronunciation"></div>
+        <div class="syllable-title">TAP TO PRACTISE</div>
+        <div class="syllables" id="syllables"></div>
+        <div class="explanation" id="explanation"></div>
+      </div>
+
+      <aside class="coach-card glass reveal delay-1">
+        <div class="coach-head"><span class="wave-icon">≋</span><div><small>VOICE COACH</small><b>Hear it. Copy it.</b></div></div>
+        <button class="play-main" id="playBtn"><span>▶</span><b>Play pronunciation</b></button>
+        <div class="play-grid">
+          <button id="slowBtn"><span>🐌</span><b>Slow</b></button>
+          <button id="repeatBtn"><span>↻</span><b>Repeat ×3</b></button>
+        </div>
+        <label class="range-label" for="speedRange"><span>Speed</span><b id="speedValue">0.90×</b></label>
+        <input id="speedRange" type="range" min="0.55" max="1.25" step="0.05" value="0.90" />
+        <div class="divider"></div>
+        <button class="record-btn" id="recordBtn"><span class="record-dot"></span><b>Record my attempt</b></button>
+        <audio id="recordingPlayback" controls hidden></audio>
+        <p class="microcopy">Your recording stays in this browser tab and is never uploaded.</p>
+      </aside>
+    </section>
+
+    <section class="capabilities reveal" id="capabilitiesSection">
+      <div class="section-heading"><div><span class="eyebrow">BUILT FOR LOCAL AI</span><h2>One app. Three power levels.</h2></div></div>
+      <div class="cap-grid">
+        <article><span class="cap-number">01</span><h3>No Model</h3><p>Our local rule engine works immediately, even when no AI server is connected.</p><div class="tag-row"><span>Instant</span><span>Offline logic</span></div></article>
+        <article><span class="cap-number">02</span><h3>Ollama / LM Studio</h3><p>Use your own Llama, Qwen, Gemma or other model for richer translations and explanations.</p><div class="tag-row"><span>Local LLM</span><span>Your hardware</span></div></article>
+        <article><span class="cap-number">03</span><h3>Desktop → Phone</h3><p>Run the secure Minnionise bridge, scan a QR code, and use your desktop model from iPhone or iPad.</p><div class="tag-row"><span>LAN only</span><span>Pairing token</span></div></article>
+      </div>
+    </section>
+  </main>
+
+  <footer><span>🍌 MINNIONISE</span><span>Fan-inspired language experiment • No affiliation with Illumination or Universal.</span><a href="https://github.com/sukantsondhi/minnionise" target="_blank" rel="noreferrer">GitHub ↗</a></footer>
+
+  <!-- Connection Center -->
+  <div class="modal-backdrop" id="connectModal" hidden>
+    <section class="modal glass connection-modal" role="dialog" aria-modal="true" aria-labelledby="connectTitle">
+      <button class="modal-close" data-close-modal="connectModal" aria-label="Close">×</button>
+      <div class="modal-kicker">LOCAL AI CONNECTION CENTER</div>
+      <h2 id="connectTitle">Choose how Minnionise thinks.</h2>
+      <p class="modal-lead">Everything below runs on your hardware. The bridge is recommended because it handles models, voices and phone pairing in one place.</p>
+
+      <div class="connection-overview">
+        <div class="diag"><span class="diag-light" id="bridgeLight"></span><small>BRIDGE</small><b id="bridgeDiag">Scanning…</b></div>
+        <div class="diag"><span class="diag-light" id="ollamaLight"></span><small>OLLAMA</small><b id="ollamaDiag">Scanning…</b></div>
+        <div class="diag"><span class="diag-light" id="lmLight"></span><small>LM STUDIO</small><b id="lmDiag">Scanning…</b></div>
+      </div>
+
+      <div class="provider-list">
+        <button class="provider-option recommended" data-provider="bridge">
+          <div class="provider-symbol bridge-symbol">M</div>
+          <div><span class="recommend-badge">RECOMMENDED</span><h3>Minnionise Bridge</h3><p>Auto-detects Ollama + LM Studio, unlocks local voice models and QR phone pairing.</p></div>
+          <span class="option-state" id="bridgeOptionState">Scan</span>
+        </button>
+        <button class="provider-option" data-provider="ollama">
+          <div class="provider-symbol ollama-symbol">◒</div>
+          <div><h3>Ollama</h3><p>Connect directly to models running at <code>127.0.0.1:11434</code>.</p></div>
+          <span class="option-state" id="ollamaOptionState">Scan</span>
+        </button>
+        <button class="provider-option" data-provider="lmstudio">
+          <div class="provider-symbol lm-symbol">LM</div>
+          <div><h3>LM Studio</h3><p>Connect to its local OpenAI-compatible server, normally on port 1234.</p></div>
+          <span class="option-state" id="lmOptionState">Scan</span>
+        </button>
+        <button class="provider-option" data-provider="no-model">
+          <div class="provider-symbol no-symbol">◌</div>
+          <div><h3>No Model Mode</h3><p>Use the built-in deterministic translator. No install, no server, no network.</p></div>
+          <span class="option-state">Use</span>
+        </button>
+      </div>
+
+      <div class="setup-help" id="setupHelp">
+        <div class="help-tabs"><button class="active" data-help="bridge">Bridge</button><button data-help="ollama">Ollama</button><button data-help="lmstudio">LM Studio</button></div>
+        <div class="help-panel" data-help-panel="bridge">
+          <p>From the cloned repository:</p><div class="command"><code>python local_bridge/server.py</code><button data-copy-command>Copy</button></div>
+          <p>For iPhone/iPad pairing, run:</p><div class="command"><code>python local_bridge/server.py --lan</code><button data-copy-command>Copy</button></div>
+        </div>
+        <div class="help-panel" data-help-panel="ollama" hidden>
+          <p>Start Ollama normally. Direct browser access from GitHub Pages may require allowing this site's origin. The bridge avoids that CORS configuration.</p>
+          <div class="command"><code>ollama serve</code><button data-copy-command>Copy</button></div>
+        </div>
+        <div class="help-panel" data-help-panel="lmstudio" hidden>
+          <p>Start LM Studio's local server with CORS enabled, or use the bridge.</p>
+          <div class="command"><code>lms server start --cors</code><button data-copy-command>Copy</button></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Model Picker -->
+  <div class="modal-backdrop" id="modelModal" hidden>
+    <section class="modal glass model-modal" role="dialog" aria-modal="true" aria-labelledby="modelTitle">
+      <button class="modal-close" data-close-modal="modelModal" aria-label="Close">×</button>
+      <div class="modal-kicker">MODEL BAY</div><h2 id="modelTitle">Select your local brain.</h2>
+      <div class="model-toolbar"><span id="modelProviderLabel">Provider</span><button class="secondary-btn" id="refreshModelsBtn">↻ Refresh</button></div>
+      <div class="model-list" id="modelList"></div>
+    </section>
+  </div>
+
+  <!-- Pairing -->
+  <div class="modal-backdrop" id="pairModal" hidden>
+    <section class="modal glass pair-modal" role="dialog" aria-modal="true" aria-labelledby="pairTitle">
+      <button class="modal-close" data-close-modal="pairModal" aria-label="Close">×</button>
+      <div class="modal-kicker">PHONE LINK</div><h2 id="pairTitle">Take your desktop model with you.</h2>
+      <p class="modal-lead">Your iPhone/iPad must be on the same Wi-Fi as this computer. The phone talks directly to the Minnionise bridge over your LAN.</p>
+      <div class="pair-layout">
+        <div class="qr-shell"><div id="qrCode"><div class="qr-placeholder">⌁<small>Start the bridge in LAN mode to generate a QR code.</small></div></div></div>
+        <div class="pair-steps">
+          <ol><li><b>Run LAN mode</b><span><code>python local_bridge/server.py --lan</code></span></li><li><b>Scan the QR</b><span>Use the Camera app on iPhone/iPad.</span></li><li><b>Open Minnionise Mobile</b><span>The pairing token is embedded in the QR.</span></li></ol>
+          <div class="pair-url" id="pairUrlBox" hidden><small>PAIRING URL</small><code id="pairUrl"></code><button id="copyPairUrl">Copy</button></div>
+          <button class="primary-btn full" id="refreshPairBtn"><span>GENERATE / REFRESH QR</span><i>⌁</i></button>
+        </div>
+      </div>
+      <div class="security-note">🔒 <b>LAN only.</b> The bridge binds to your local network only when you explicitly use <code>--lan</code>, and remote devices need the random pairing token.</div>
+    </section>
+  </div>
+
+  <!-- History -->
+  <div class="modal-backdrop" id="historyModal" hidden>
+    <section class="modal glass history-modal" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+      <button class="modal-close" data-close-modal="historyModal" aria-label="Close">×</button>
+      <div class="modal-kicker">LOCAL LIBRARY</div><h2 id="historyTitle">History & favourites</h2>
+      <div class="history-tabs"><button class="active" data-history="history">Recent</button><button data-history="favorites">Favourites</button><button id="clearHistoryBtn">Clear</button></div>
+      <div id="historyList" class="history-list"></div>
+    </section>
+  </div>
+
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "Minnionise — Local AI Voice Lab",
+  "short_name": "Minnionise",
+  "description": "A local-first Minnionese translator, pronunciation coach and local AI connector.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#090b10",
+  "theme_color": "#090b10",
+  "icons": [{"src":"favicon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}
